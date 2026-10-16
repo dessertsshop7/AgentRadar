@@ -24,7 +24,7 @@ def test_real_health_page():
             launch_options["channel"] = channel
         browser = playwright.chromium.launch(**launch_options)
         page = browser.new_page(viewport={"width": 1280, "height": 900})
-        page.goto(web_url, wait_until="networkidle")
+        page.goto(f"{web_url.rstrip('/')}/status", wait_until="networkidle")
         expect(page.get_by_role("heading", name="工程健康检查")).to_be_visible()
 
         if scenario == "unreachable":
@@ -78,7 +78,8 @@ def test_loading_state_until_the_real_request_continues():
         page.route("**/api/v1/health", lambda route: pending.append(route))
         with page.expect_request("**/api/v1/health"):
             page.goto(
-                os.getenv("E2E_WEB_URL", "http://localhost:3000"), wait_until="domcontentloaded"
+                f"{os.getenv('E2E_WEB_URL', 'http://localhost:3000').rstrip('/')}/status",
+                wait_until="domcontentloaded",
             )
 
         expect(page.get_by_test_id("overall-status")).to_have_text("检查中…")

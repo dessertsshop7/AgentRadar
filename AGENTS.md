@@ -1,7 +1,8 @@
 # AgentRadar 项目约束
 
-当前阶段为 **P00 工程基础**。只实现运行、健康检查、迁移、日志、错误约定、测试与 CI。
-不得自行开发 GitHub 采集、Agent、Skill、MCP、用户、推荐等业务模块，或进入后续阶段。
+当前阶段为 **P01 产品规划与页面原型**。交付七份产品文档、统一导航、发现/详情/选型助手演示。
+只使用明确标识的集中演示数据和固定规则；不实现真实采集、模型调用、用户系统、企业功能、
+后端业务接口或业务表，不自行进入 P02。保留 P00 真实健康检查与已有验证。
 
 ## 工作方式
 
@@ -18,14 +19,16 @@
 
 ## 目录职责
 
-- `apps/web`：Next.js App Router、TypeScript、最小工程状态页面。
+- `apps/web`：Next.js App Router、TypeScript；`/discover`、`/tools/[slug]`、`/assistant` 原型与 `/status` 工程状态。
+- `apps/web/public/demo/catalog.json`：集中管理的虚构案例；`apps/web/lib`：数据类型与读取入口。
+- `docs/product`：PRD、画像、旅程、优先级、信息架构、设计规范和指标定义。
 - `apps/api/app/core`：配置、统一错误和结构化日志。
 - `apps/api/app/api`：`/api/v1` 路由与响应模型。
 - `apps/api/app/db`：SQLAlchemy 基础与异步会话管理。
 - `apps/api/alembic`：版本化迁移；`apps/api/tests`：单元、真实 PostgreSQL 集成测试。
 - `tests/e2e`：连接运行中服务的 Playwright 浏览器验证。
 - `infra`、`compose.yaml`：容器构建与本地编排。
-- `docs/architecture/p00-baseline.md`：架构、接口、阶段验证记录和限制。
+- `docs/architecture/p00-baseline.md`：历史工程基线；`p01-baseline.md`：当前原型边界与验证记录。
 - `.github/workflows`：自动检查与测试。
 
 ## 从根目录运行
@@ -46,6 +49,8 @@ npm.cmd --prefix apps/web run build
 
 完整安装、迁移、浏览器故障场景和跨平台命令见 README。
 锁文件更新必须有明确依赖变更目的，禁止无必要升级与 `npm audit fix --force`。
+浏览器正常场景运行 `tests/e2e`；数据库/API 故障场景只运行 `tests/e2e/test_health_page.py`。
+P01 不增加前端依赖，沿用 CSS；真实数据、人工内容、AI 内容和演示内容必须明确区分。
 
 ## 安全与配置
 
@@ -59,7 +64,7 @@ npm.cmd --prefix apps/web run build
 ## Git 与阶段验收
 
 - 默认分支 `main`；首次提交前检查 `.gitignore` 和暂存区，不包含真实配置。
-- **先报告 P00 结果并等待用户验收。只有用户明确确认验收通过后才能创建本地提交。**
+- **先报告 P01 结果并等待用户验收。只有用户明确确认本阶段验收通过后才能创建本地提交。**
 - 创建远程仓库、推送代码、改写历史需用户明确指令。
 - 阶段报告包含功能、主要文件、本地验证、实际测试结果、真实/Mock 数据、缺陷与债务、
   验收结论、建议 Commit 信息及后续接口依赖。

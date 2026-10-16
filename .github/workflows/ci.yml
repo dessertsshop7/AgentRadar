@@ -1,4 +1,4 @@
-name: P00 checks
+name: AgentRadar checks
 
 on:
   push:
@@ -92,12 +92,12 @@ jobs:
       - name: Database unavailable
         run: |
           docker compose stop db
-          HEALTH_SCENARIO=database_unhealthy python -m pytest -c apps/api/pyproject.toml tests/e2e -m e2e
+          HEALTH_SCENARIO=database_unhealthy python -m pytest -c apps/api/pyproject.toml tests/e2e/test_health_page.py -m e2e
           docker compose start db
       - name: API unavailable
         run: |
           docker compose stop api
-          HEALTH_SCENARIO=unreachable python -m pytest -c apps/api/pyproject.toml tests/e2e -m e2e
+          HEALTH_SCENARIO=unreachable python -m pytest -c apps/api/pyproject.toml tests/e2e/test_health_page.py -m e2e
           docker compose start api
       - name: Service logs
         if: always()

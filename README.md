@@ -1,7 +1,13 @@
 # AgentRadar
 
 面向 AI 初学者、产品运营人员和企业技术支持团队的 AI 工具发现与应用平台。
-当前只完成 **P00 工程基础**，页面用于验证前端 → API → PostgreSQL 链路，尚无业务功能。
+当前阶段为 **P01 产品规划与页面原型**：发现、详情与固定选型演示，保留 P00 的真实工程健康检查。
+工具均为明确标识的虚构案例，没有真实采集、模型、用户系统或业务数据写入。
+
+产品定义见 [PRD](docs/product/prd.md)；配套文档为
+[用户画像](docs/product/personas.md)、[用户旅程](docs/product/user-journeys.md)、
+[功能优先级](docs/product/feature-priority.md)、[信息架构](docs/product/information-architecture.md)、
+[设计规范](docs/product/design-system.md) 和 [指标字典](docs/product/metrics.md)。
 
 ## 前置条件
 
@@ -33,12 +39,28 @@ docker compose ps -a
 
 打开：
 
-- 页面：<http://localhost:3000>
+- 产品入口/发现页：<http://localhost:3000/discover>（根地址自动转入）。
+- 示例详情：<http://localhost:3000/tools/knowledge-base>。
+- 选型演示：<http://localhost:3000/assistant>。
+- 工程状态：<http://localhost:3000/status>（P00 健康页面迁至此处）。
 - 健康 API：<http://localhost:8000/api/v1/health>
 - API 文档：<http://localhost:8000/api/v1/docs>
 
-页面应显示“全部正常”、后端“已连接”、数据库“正常”、检查时间和请求 ID。
+工程状态页面应显示“全部正常”、后端“已连接”、数据库“正常”、检查时间和请求 ID。
 点击“重新检查”会执行新的真实 API 请求；重新检查期间显示“检查中…”。
+
+## P01 原型走查
+
+1. 进入发现页，搜索“知识库”，选择“知识管理”和“无需代码（示例设定）”，点击“搜索与筛选”。
+2. 打开“团队知识库问答助手”，查看适用、不适用、条件和来源边界。
+3. 点击“用这个场景试试选型助手”，输入至少 10 个非空白字符的任务，选择场景与技术条件。
+4. 点击“展示演示方案”，查看固定规则、候选与待核实项；可修改需求或回详情。
+5. 搜索不存在的词验证空结果；清除筛选恢复目录；顶部“工程状态”仍验证真实 API/数据库。
+
+三页始终标明“演示数据”。助手另外显示“演示交互，未连接模型”；文本不参加语义分析。
+数据唯一文件为 `apps/web/public/demo/catalog.json`，通过静态文件读取，不是后端业务接口。
+目录请求有 5 秒超时、格式检查和手动重试。需求与结果仅在页面内存，刷新或离开即清除，不提交到业务服务。
+其他产品/运营/企业路由仅在信息架构中规划，不提供不可用导航；直接访问会显示未找到和返回入口。
 
 ## 配置与访问地址
 
@@ -151,12 +173,14 @@ Remove-Item Env:PLAYWRIGHT_CHANNEL -ErrorAction SilentlyContinue
 
 以上 `Remove-Item Env:` 仅清除当前 PowerShell 会话变量，不删除文件。
 浏览器测试只访问真实服务，截图保存在被 Git 忽略的 `artifacts/`。
+P00 健康测试访问 `/status`；P01 访问真实页面和静态演示文件，覆盖三种宽度、键盘流程、查询 URL、
+表单与错误恢复。空目录/损坏响应使用明确的响应替身，网络失败使用请求中断；都不算真实业务数据验证。
 
 ## 手工和浏览器故障验收
 
-请只在本机 P00 开发环境操作，以下停止操作均可恢复，不清除数据。
+请只在本机开发环境操作，以下停止操作均可恢复，不清除数据。
 
-1. 正常：打开页面，点击重新检查，确认状态、时间和请求 ID 更新。
+1. 正常：打开 `/status` 页面，点击重新检查，确认状态、时间和请求 ID 更新。
 2. 数据库异常：执行 `docker compose stop db`，重新检查，页面应显示“数据库异常”，
    后端“已连接”，数据库“异常”；API 返回 HTTP 503 和 `DATABASE_UNAVAILABLE`。
 3. 恢复数据库：执行 `docker compose start db`，待数据库就绪后重新检查，应恢复正常。
@@ -168,12 +192,12 @@ Remove-Item Env:PLAYWRIGHT_CHANNEL -ErrorAction SilentlyContinue
 ```powershell
 docker compose stop db
 $env:HEALTH_SCENARIO = 'database_unhealthy'
-.\.venv\Scripts\python.exe -m pytest -c apps/api/pyproject.toml tests/e2e -m e2e
+.\.venv\Scripts\python.exe -m pytest -c apps/api/pyproject.toml tests/e2e/test_health_page.py -m e2e
 docker compose start db
 # 等待数据库就绪，再测试下一项。
 docker compose stop api
 $env:HEALTH_SCENARIO = 'unreachable'
-.\.venv\Scripts\python.exe -m pytest -c apps/api/pyproject.toml tests/e2e -m e2e
+.\.venv\Scripts\python.exe -m pytest -c apps/api/pyproject.toml tests/e2e/test_health_page.py -m e2e
 docker compose start api
 $env:HEALTH_SCENARIO = 'healthy'
 ```
@@ -228,8 +252,10 @@ Linux/macOS：使用 `.venv/bin/python` 替换 `.venv\Scripts\python.exe`，使�
 ## CI、阶段基线与 Git
 
 GitHub Actions 配置包含后端 Ruff/Pytest、真实 PostgreSQL 迁移与集成测试、前端静态检查/类型检查/构建，
-以及 Compose + Playwright 的真实链路验证。实际本地执行结果和已知限制见
-[P00 基线](docs/architecture/p00-baseline.md)。未在 GitHub 运行的工作流不能宣称远端通过。
+以及 Compose + Playwright 的原型流程与真实健康链路验证。正常场景运行整个 `tests/e2e`，
+停止数据库/API 的故障场景只运行健康测试文件。实际本地执行结果和已知限制见
+[P01 基线](docs/architecture/p01-baseline.md) 与历史 [P00 基线](docs/architecture/p00-baseline.md)。
+未在 GitHub 运行的工作流不能宣称远端通过。
 
-当前默认分支为 `main`。P00 实现完成后先等待用户验收，只有明确验收通过后才创建本地提交。
+当前默认分支为 `main`。P00 已验收提交并推送；P01 完成后先等待用户验收，只有明确验收通过后才创建本地提交。
 创建远程仓库、推送或改写历史必须另行获得明确指令。
