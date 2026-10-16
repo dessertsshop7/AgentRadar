@@ -1,0 +1,40 @@
+# 本地配置和密钥
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# 依赖、缓存、日志与构建产物
+.venv/
+venv/
+node_modules/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.cache/
+.next/
+out/
+dist/
+build/
+*.egg-info/
+*.tsbuildinfo
+*.log
+.coverage
+coverage/
+htmlcov/
+playwright-report/
+test-results/
+artifacts/
+
+# 本地编辑器与系统文件
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+.agents/
+.codex/
+.aws/
