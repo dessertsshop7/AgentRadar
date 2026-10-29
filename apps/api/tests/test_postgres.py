@@ -1,13 +1,13 @@
 """真实 PostgreSQL 集成验证；不使用 SQLite、Session 替身或伪造迁移结果。"""
 
 import asyncio
-import os
 import time
 from pathlib import Path
 
 import pytest
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
@@ -16,15 +16,6 @@ from app.core.config import Settings
 from app.main import create_app
 
 pytestmark = pytest.mark.integration
-
-
-@pytest.fixture
-def database_url():
-    value = os.getenv("TEST_DATABASE_URL")
-    if not value:
-        pytest.skip("未设置 TEST_DATABASE_URL，未执行真实 PostgreSQL 验证")
-    assert make_url(value).drivername == "postgresql+psycopg"
-    return value
 
 
 def test_baseline_migration_is_recorded_and_repeatable(database_url, monkeypatch):
@@ -37,7 +28,7 @@ def test_baseline_migration_is_recorded_and_repeatable(database_url, monkeypatch
     try:
         with engine.connect() as connection:
             revision = connection.scalar(text("SELECT version_num FROM alembic_version"))
-        assert revision == "0001_p00_baseline"
+        assert revision == ScriptDirectory.from_config(config).get_current_head()
     finally:
         engine.dispose()
 
@@ -53,6 +44,30 @@ def test_health_queries_real_postgres(database_url):
     assert response.json()["status"] == "ok"
     assert response.json()["dependencies"]["database"]["status"] == "healthy"
     assert response.headers["X-Request-ID"] == response.json()["request_id"]
+
+
+def test_p02_migrations_round_trip_only_in_independent_test_database(database_url, monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", database_url)
+    config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
+    engine = create_engine(database_url, connect_args={"connect_timeout": 3})
+    try:
+        with engine.connect() as connection:
+            target = connection.scalar(text("SELECT current_database()"))
+        assert target.endswith("_test") and target == make_url(database_url).database
+        command.downgrade(config, "0001_p00_baseline")
+        with engine.connect() as connection:
+            assert (
+                connection.scalar(text("SELECT version_num FROM alembic_version"))
+                == "0001_p00_baseline"
+            )
+        command.upgrade(config, "head")
+        with engine.connect() as connection:
+            assert (
+                connection.scalar(text("SELECT version_num FROM alembic_version"))
+                == ScriptDirectory.from_config(config).get_current_head()
+            )
+    finally:
+        engine.dispose()
 
 
 def test_real_connection_refusal_returns_503_within_timeout(database_url):

@@ -4,6 +4,7 @@ from sqlalchemy.pool import NullPool
 
 from app.core.config import Settings
 from app.core.logging import configure_logging
+from app.db import models  # noqa: F401 -- 注册迁移元信息
 from app.db.base import Base
 from app.db.session import connection_options
 

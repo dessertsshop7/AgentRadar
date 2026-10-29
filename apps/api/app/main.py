@@ -10,11 +10,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import async_sessionmaker
 from starlette.exceptions import HTTPException
 
+from app.api.assets import router as assets_router
 from app.api.health import router
 from app.core.config import Settings
 from app.core.errors import ErrorResponse, error_response
 from app.core.logging import configure_logging
 from app.db.session import create_database_engine
+from app.ingestion.scheduler import SyncScheduler
 
 logger = logging.getLogger("agentradar")
 
@@ -27,9 +29,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def lifespan(application: FastAPI):
         engine = create_database_engine(settings)
         application.state.session_factory = async_sessionmaker(engine, expire_on_commit=False)
+        scheduler = SyncScheduler(engine, settings) if settings.sync_enabled else None
+        if scheduler:
+            scheduler.start()
         try:
             yield
         finally:
+            if scheduler:
+                await scheduler.stop()
             await engine.dispose()
 
     app = FastAPI(
@@ -109,4 +116,5 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return response
 
     app.include_router(router, prefix="/api/v1")
+    app.include_router(assets_router, prefix="/api/v1")
     return app

@@ -19,7 +19,7 @@ services:
       start_period: 10s
 
   migrate:
-    image: agentradar-api:p00
+    image: agentradar-api:p02
     build:
       context: .
       dockerfile: infra/api.Dockerfile
@@ -35,11 +35,18 @@ services:
     restart: "no"
 
   api:
-    image: agentradar-api:p00
+    image: agentradar-api:p02
     build:
       context: .
       dockerfile: infra/api.Dockerfile
-    environment: *api-environment
+    environment:
+      <<: *api-environment
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      SYNC_ENABLED: ${SYNC_ENABLED:-false}
+      SYNC_INTERVAL_HOURS: ${SYNC_INTERVAL_HOURS:-24}
+      SYNC_MAX_RECORDS: ${SYNC_MAX_RECORDS:-1500}
+      SYNC_README_LIMIT: ${SYNC_README_LIMIT:-30}
+      SYNC_MCP_LIMIT: ${SYNC_MCP_LIMIT:-100}
     ports:
       - "127.0.0.1:8000:8000"
     depends_on:

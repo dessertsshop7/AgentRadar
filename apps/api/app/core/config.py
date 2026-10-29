@@ -13,6 +13,12 @@ class Settings(BaseSettings):
     database_timeout_seconds: float = Field(default=3, gt=0, le=10)
     cors_origins: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
+    github_token: SecretStr | None = None
+    sync_enabled: bool = False
+    sync_interval_hours: int = Field(default=24, ge=1, le=168)
+    sync_max_records: int = Field(default=1500, ge=1, le=10000)
+    sync_readme_limit: int = Field(default=30, ge=0, le=200)
+    sync_mcp_limit: int = Field(default=100, ge=1, le=10000)
 
     @field_validator("database_url")
     @classmethod

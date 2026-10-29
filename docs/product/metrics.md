@@ -1,6 +1,7 @@
 # 指标、漏斗与事件字典
 
-2026-10-17，P01 设计建议。当前没有分析 SDK、业务事件、测评用户数据或实际指标。
+2026-10-17，P01 设计建议。当前没有分析 SDK、业务事件、测评用户数据或真实用户应用指标。
+P02 的真实采集计数与工程验证单独记录，不能作为用户转化或使用成功指标。
 P00 工程请求日志只能说明服务请求情况，不能还原工具尝试和应用成功。
 以下窗口、证据与去重是待确认口径，不是已取得的产品表现。
 
@@ -64,7 +65,7 @@ P01 完成原型任务只算交互验收，不进入北极星。
 | `outcome_feedback_submitted` | 服务端保存成功/失败/未继续/尚无结论的反馈 | `trial_id, outcome, evidence_type, reason_category, feedback_version` | 后端；自报成功和人工核实证据分开 | 后续 MVP F05/F07 |
 | `support_request_submitted` | 合法脱敏问题保存成功 | `support_id, tool_id, environment_version, issue_category` | 后端；仅代表请求受理 | 增强版 F11 |
 | `support_resolution_feedback_submitted` | 用户验证并提交结果，保存成功 | `support_id, resolution, evidence_type, knowledge_version?` | 后端；建议生成不算解决 | 增强版 F11 |
-| `content_review_completed` | 维护者完成内容审核且事务提交 | `tool_id, content_version_id, review_decision` | 维护端/后端；数据质量指标，不混入用户漏斗 | P02 候选先记录审核业务日志，分析接入另定 |
+| `content_review_completed` | 维护者完成内容审核且事务提交 | `tool_id, content_version_id, review_decision` | 维护端/后端；数据质量指标，不混入用户漏斗 | P02 维护 CLI/数据库保存审核字段，分析事件未接入；真实审核量另行验收 |
 
 HTTP 请求 ID 用于链路排查，事件 ID 用于统计幂等；二者用途不同，可关联但不能互相替代。
 结果反馈允许修正；保留版本，以观察截止点前最新有效版本统计，不能重复累计为多个成功。

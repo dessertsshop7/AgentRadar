@@ -1,8 +1,13 @@
 # AgentRadar
 
 面向 AI 初学者、产品运营人员和企业技术支持团队的 AI 工具发现与应用平台。
-当前阶段为 **P01 产品规划与页面原型**：发现、详情与固定选型演示，保留 P00 的真实工程健康检查。
-工具均为明确标识的虚构案例，没有真实采集、模型、用户系统或业务数据写入。
+当前阶段为 **P02 真实数据采集与技术资产中心**：真实 GitHub/MCP 采集、版本、受控审核和查询 API。
+前端仍保留 P01 明确标识的虚构演示，P03 才接真实目录；P00 工程健康检查继续使用真实数据库。
+P02 不调用项目模型 API、不实现用户/企业系统；采集入库不等于审核发布，只有完成受控审核的条目进入公开查询。
+2026-10-28 用户明确委托 AI 代审后，已实际发布 103 项、暂缓 30 项；审核者如实标记为 `delegated_ai`，不冒充人类审核。
+当前执行结果、证据与限制见 [委托审核报告](docs/operations/p02-delegated-review-20261028.md)；
+[P02 基线](docs/architecture/p02-baseline.md) 和 [10 月 22 日内容审校记录](docs/operations/p02-content-review-20261022.md) 保留历史结果。
+2026-10-29 已按用户“达标后提交推送”的指令完成 [P02 验收复核](docs/operations/p02-acceptance-20261029.md)，未启动 P03。
 
 产品定义见 [PRD](docs/product/prd.md)；配套文档为
 [用户画像](docs/product/personas.md)、[用户旅程](docs/product/user-journeys.md)、
@@ -45,6 +50,8 @@ docker compose ps -a
 - 工程状态：<http://localhost:3000/status>（P00 健康页面迁至此处）。
 - 健康 API：<http://localhost:8000/api/v1/health>
 - API 文档：<http://localhost:8000/api/v1/docs>
+- 真实资产查询：<http://localhost:8000/api/v1/assets>（只返回已审条目，公开池为零时正常返回空数组）。
+- 真实分类/趋势：<http://localhost:8000/api/v1/categories>、<http://localhost:8000/api/v1/trending>。
 
 工程状态页面应显示“全部正常”、后端“已连接”、数据库“正常”、检查时间和请求 ID。
 点击“重新检查”会执行新的真实 API 请求；重新检查期间显示“检查中…”。
@@ -75,6 +82,10 @@ docker compose ps -a
 | `DATABASE_TIMEOUT_SECONDS` | 健康检查总超时，默认 3 秒；同时设置连接、连接池和语句超时 |
 | `CORS_ORIGINS` | 允许的浏览器 Origin，JSON 数组，默认 localhost/127.0.0.1:3000 |
 | `LOG_LEVEL` | API 应用日志级别，默认 INFO |
+| `GITHUB_TOKEN` | P02 后端采集令牌，浏览器和迁移容器不接收；GitHub 插件登录不能替代此配置 |
+| `SYNC_ENABLED` | 默认 false；开启后启动检查及每分钟 tick，超期只补跑一次 |
+| `SYNC_INTERVAL_HOURS` | 默认 24 小时；根据数据库中成功计划时间判断超期 |
+| `SYNC_MAX_RECORDS` / `SYNC_README_LIMIT` / `SYNC_MCP_LIMIT` | 每批默认 GitHub 1500、README 30、MCP 100；有界采集与覆盖记录 |
 | `NEXT_PUBLIC_API_BASE_URL` | 浏览器访问的 API 根地址；在前端构建时固定 |
 
 | 访问方 | 前端 | API | PostgreSQL |
@@ -101,6 +112,8 @@ PostgreSQL 数据存储在 Compose 命名卷 `agentradar_postgres_data`。
 
 P00 没有业务实体，基线迁移 `0001_p00_baseline` 的 upgrade/downgrade 为空。
 执行迁移仍会创建 `alembic_version` 并记录当前版本，不创建虚构业务表。
+P02 新增 `0002_p02_assets` 与 `0003_p02_review`，不修改 P00 基线；当前 head 为 `0003_p02_review`。
+表、来源指针、已审分类和发布隔离见 [数据字典](docs/architecture/p02-data-dictionary.md)。
 
 ```powershell
 # 完整启动时自动迁移；单独执行或检查时使用：
@@ -148,12 +161,37 @@ npm.cmd --prefix apps/web run build
 真实数据库集成验证（先启动 Compose 数据库）：
 
 ```powershell
-$env:TEST_DATABASE_URL = 'postgresql+psycopg://agentradar:agentradar_dev_only@127.0.0.1:15432/agentradar'
+# 新环境仅创建一次；本机本轮已创建，不要重复创建。
+docker compose exec -T db createdb -U agentradar agentradar_test
+$env:TEST_DATABASE_URL = 'postgresql+psycopg://agentradar:agentradar_dev_only@127.0.0.1:15432/agentradar_test'
 .\.venv\Scripts\python.exe -m pytest -c apps/api/pyproject.toml apps/api/tests -m integration
 ```
 
 集成测试使用 PostgreSQL，执行并重复执行迁移、读取迁移版本、验证真实 SQL 查询及真实连接失败。
-未设置 `TEST_DATABASE_URL` 时会明确跳过；跳过不等于通过。后续有业务数据时应使用独立测试数据库。
+未设置 `TEST_DATABASE_URL` 时会明确跳过；跳过不等于通过。P02 起强制使用名称以 `_test` 结尾的独立库，
+迁移/清理前核验目标，只清理该测试库内本项目表；不能使用开发库或 SQLite 代替。
+
+## P02 真实采集与审核
+
+先在本机 `.env` 配置公开仓库只读 `GITHUB_TOKEN`；MCP Registry 公开目录不需要单独的 Key。
+当前不需要 LLM Key。仅配置令牌不会自动开始采集，默认同步关闭：
+
+```powershell
+$env:PYTHONPATH = 'apps/api'
+.\.venv\Scripts\python.exe -m app.cli sync --source github --query 'repo:modelcontextprotocol/python-sdk' --max-records 1 --readme-limit 1
+.\.venv\Scripts\python.exe -m app.cli sync --source mcp --max-records 100
+.\.venv\Scripts\python.exe -m app.cli stats
+.\.venv\Scripts\python.exe -m app.cli jobs
+.\.venv\Scripts\python.exe -m app.cli export-review --output artifacts/p02/review-queue.json
+```
+
+仅用容器时可执行 `docker compose exec -T api python -m app.cli stats`。
+partial 表示范围未完整或有错误，不是全量成功；退出码 2，查看 coverage/errors 后处理。
+清单导出不会发布。默认由真实审核人核对中文内容与来源，再执行人工确认命令；
+本轮按用户明确授权使用独立的委托 AI 审核路径，记录 `ai:codex`、授权依据和内容来源，不使用人工确认标志。
+不提供匿名 HTTP 触发或管理后台；本地/容器及数据库访问权即维护边界。
+操作、重试、MCP 检查点、Skill 元信息边界及中文草稿格式见 [采集运维](docs/operations/p02-ingestion.md)。
+P03 使用的 DTO/分类/slug 与错误码见 [API 契约](docs/api/p02-assets.md)。
 
 浏览器验证（使用已安装的 Microsoft Edge）：
 
@@ -257,5 +295,6 @@ GitHub Actions 配置包含后端 Ruff/Pytest、真实 PostgreSQL 迁移与集�
 [P01 基线](docs/architecture/p01-baseline.md) 与历史 [P00 基线](docs/architecture/p00-baseline.md)。
 未在 GitHub 运行的工作流不能宣称远端通过。
 
-当前默认分支为 `main`。P00 已验收提交并推送；P01 完成后先等待用户验收，只有明确验收通过后才创建本地提交。
+当前默认分支为 `main`。P00/P01 已验收提交并推送；P02 先报告工程、来源、采集规模、受控发布四项结果，
+只有用户明确验收通过后才创建本地提交。不自行进入 P03。
 创建远程仓库、推送或改写历史必须另行获得明确指令。

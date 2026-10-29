@@ -232,3 +232,15 @@ def test_unknown_tool_has_recovery_navigation(product_page: Page):
     expect(page.get_by_role("heading", name="没有找到这个页面或演示工具")).to_be_visible()
     page.get_by_role("link", name="返回发现页", exact=True).click()
     expect(page.get_by_test_id("tool-card")).to_have_count(6)
+
+
+def test_unknown_assistant_context_has_recovery_without_inventing_a_tool(product_page: Page):
+    page = product_page
+    page.goto(f"{WEB_URL}/assistant?tool=unknown-p02-tool")
+    expect(
+        page.get_by_text("没有找到带入的演示工具，请重新选择业务场景。", exact=True)
+    ).to_be_visible()
+    expect(page.get_by_label("业务场景")).to_be_enabled()
+    page.get_by_label("你想解决什么问题").fill("希望把团队资料整理成可以检索与核对来源的知识库。")
+    page.get_by_role("button", name="展示演示方案").click()
+    expect(page.get_by_test_id("assistant-result")).to_contain_text("演示交互，未连接模型")
