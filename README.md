@@ -8,6 +8,7 @@ P02 不调用项目模型 API、不实现用户/企业系统；采集入库不�
 当前执行结果、证据与限制见 [委托审核报告](docs/operations/p02-delegated-review-20261028.md)；
 [P02 基线](docs/architecture/p02-baseline.md) 和 [10 月 22 日内容审校记录](docs/operations/p02-content-review-20261022.md) 保留历史结果。
 2026-10-29 已按用户“达标后提交推送”的指令完成 [P02 验收复核](docs/operations/p02-acceptance-20261029.md)，未启动 P03。
+随后审查发现的持续同步、重审及接口衔接问题，修复与验证见 [P02 缺陷修复报告](docs/operations/p02-fixes-20261029.md)。
 
 产品定义见 [PRD](docs/product/prd.md)；配套文档为
 [用户画像](docs/product/personas.md)、[用户旅程](docs/product/user-journeys.md)、

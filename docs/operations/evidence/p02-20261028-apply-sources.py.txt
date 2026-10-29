@@ -1,0 +1,100 @@
+"""本次受控刷新：真实官方快照入库，复用 SyncService 的锁、任务、版本与趋势。"""
+
+import asyncio
+import json
+from datetime import datetime
+from pathlib import Path
+from uuid import UUID
+
+from sqlalchemy import select
+
+from app.core.config import Settings
+from app.db.models import Asset
+from app.db.session import create_database_engine
+from app.ingestion.providers import Readme
+from app.ingestion.rules import content_hash
+from app.ingestion.sync import GitHubRecord, SyncService
+
+ROOT = Path(__file__).resolve().parent
+
+
+class VerifiedSnapshotRefresh(SyncService):
+    def __init__(self, engine, settings, snapshots):
+        super().__init__(engine, settings)
+        self.snapshots = snapshots
+
+    async def _github(self, adapter, job_id, counts, coverage, queries, limit, readme_limit):
+        coverage.update(
+            selection_mode="already_collected_stable_ids",
+            source_evidence="artifacts/p02/delegated-review-20261028/live-checks-expanded.json",
+            source_evidence_hash=content_hash(self.snapshots),
+            snapshot_count=len(self.snapshots),
+            external_http_performed_during_verification=True,
+            replaying_missed_schedules=False,
+        )
+        for snapshot in self.snapshots:
+            raw = snapshot["repository_raw"]
+            item = GitHubRecord.model_validate(raw)
+            counts["discovered"] += 1
+            original_clock = self.clock
+            # 该值来自实际官方请求开始时记录；不要制造历史日期或将入库时间冒充原始采集时间。
+            observed_at = datetime.fromisoformat(snapshot["checked_at"])
+            self.clock = lambda instant=observed_at: instant
+            try:
+                await self._store_github(
+                    item,
+                    raw,
+                    Readme("content", body=snapshot["readme"]["body"]),
+                    job_id,
+                    counts,
+                )
+            finally:
+                self.clock = original_clock
+
+
+async def main():
+    snapshots = json.loads((ROOT / "live-checks-expanded.json").read_text(encoding="utf-8"))["items"]
+    base = json.loads((ROOT.parent / "review-zh-20261018" / "sources.json").read_text(encoding="utf-8"))["items"]
+    extra = json.loads((ROOT / "supplemental-selection.json").read_text(encoding="utf-8"))["items"]
+    expected = {item["number"]: item for item in base + extra}
+    assert len(snapshots) == len(expected) == 133
+    engine = create_database_engine(Settings())
+    service = VerifiedSnapshotRefresh(engine, Settings(), snapshots)
+    try:
+        async with service.sessions() as session:
+            for snapshot in snapshots:
+                prior = expected[snapshot["number"]]
+                assert snapshot["status"] == "ok" and snapshot["identity_matches"]
+                assert snapshot["readme"]["body"]
+                assert content_hash(snapshot["readme"]["body"]) == snapshot["readme"]["sha256"]
+                raw = snapshot["repository_raw"]
+                assert "stargazers_count" in raw and "forks_count" in raw
+                GitHubRecord.model_validate(raw)
+                asset = await session.get(Asset, UUID(prior["asset_id"]))
+                assert asset and asset.source_id == "github"
+                assert asset.external_id == str(raw["id"]) == prior["slug"].removeprefix("gh-")
+        result = await service.run(
+            "github", max_records=133, readme_limit=133, trigger="delegated_review_refresh"
+        )
+        assert result["status"] == "succeeded", result["status"]
+        bindings = []
+        async with service.sessions() as session:
+            for snapshot in snapshots:
+                prior = expected[snapshot["number"]]
+                asset = await session.get(Asset, UUID(prior["asset_id"]))
+                assert asset.current_source_hash == snapshot["readme"]["sha256"]
+                bindings.append({"number": snapshot["number"], "asset_id": str(asset.id),
+                                 "slug": asset.slug, "source_hash": asset.current_source_hash})
+        with (ROOT / "sync-result.json").open("x", encoding="utf-8") as stream:
+            json.dump(result, stream, ensure_ascii=False, indent=2)
+        with (ROOT / "database-bindings.json").open("x", encoding="utf-8") as stream:
+            json.dump(bindings, stream, ensure_ascii=False, indent=2)
+        print(json.dumps({"job_id": result["job_id"], "status": result["status"],
+                          "counts": result["counts"], "bindings_verified": len(bindings)}, ensure_ascii=False))
+    finally:
+        await engine.dispose()
+
+
+if __name__ == "__main__":
+    with asyncio.Runner(loop_factory=asyncio.SelectorEventLoop) as runner:
+        runner.run(main())

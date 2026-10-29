@@ -73,6 +73,16 @@ def default_queries(now):
     ]
 
 
+def review_facts(raw):
+    """会影响中文说明的事实；Stars/push 等运行指标不触发内容重审。"""
+    license_id = (raw.get("license") or {}).get("spdx_id")
+    return {
+        "description": raw.get("description"),
+        "license": None if license_id == "NOASSERTION" else license_id,
+        "topics": sorted(raw.get("topics", [])),
+    }
+
+
 class SyncService:
     def __init__(self, engine, settings, *, github=None, mcp=None, clock=None):
         self.engine = engine
@@ -175,6 +185,32 @@ class SyncService:
                 "errors": 0,
             }
             coverage = {"queries": [], "incomplete": False, "scan_started_at": now.isoformat()}
+            if source_id == "github" and queries is None:
+                async with self.sessions() as session:
+                    previous = await session.scalar(
+                        select(SyncJob)
+                        .where(
+                            SyncJob.source_id == "github",
+                            SyncJob.id != job_id,
+                            SyncJob.coverage["github_plan"].as_string() == "default-v1",
+                        )
+                        .order_by(SyncJob.started_at.desc())
+                        .limit(1)
+                    )
+                saved = (
+                    previous.coverage
+                    if previous and previous.coverage.get("cycle_in_progress")
+                    else {}
+                )
+                coverage.update(
+                    github_plan="default-v1",
+                    cycle_in_progress=True,
+                    plan_queries=saved.get("plan_queries", default_queries(now)),
+                    query_index=saved.get("query_index", 0),
+                    query_offset=saved.get("query_offset", 0),
+                    cycle_limited=saved.get("cycle_limited", False),
+                )
+                await self._checkpoint(job_id, coverage)
             try:
                 async with AsyncExitStack() as stack:
                     if source_id == "github":
@@ -204,7 +240,7 @@ class SyncService:
                             job_id,
                             counts,
                             coverage,
-                            queries if queries is not None else default_queries(now),
+                            queries if queries is not None else coverage["plan_queries"],
                             max_records,
                             readme_limit,
                         )
@@ -282,13 +318,22 @@ class SyncService:
             },
         )
 
+    async def _checkpoint(self, job_id, coverage):
+        async with self.sessions.begin() as session:
+            job = await session.get(SyncJob, job_id)
+            job.coverage = dict(coverage)
+
     async def _github(self, adapter, job_id, counts, coverage, queries, limit, readme_limit):
         seen, readmes_used = set(), 0
-        for query in queries:
+        planned = coverage.get("github_plan") == "default-v1"
+        start = coverage.get("query_index", 0) if planned else 0
+        for index in range(start, len(queries)):
+            query = queries[index]
             if len(seen) >= limit:
                 coverage["incomplete"] = True
                 break
-            result = await adapter.discover(query, limit=min(1000, limit - len(seen)))
+            options = {"offset": coverage.get("query_offset", 0)} if planned else {}
+            result = await adapter.discover(query, limit=min(1000, limit - len(seen)), **options)
             coverage["queries"].append(
                 {
                     "query": query,
@@ -296,10 +341,30 @@ class SyncService:
                     "returned": len(result.records),
                     "pages": result.pages,
                     "incomplete": result.incomplete,
+                    "next_offset": result.next_offset,
                 }
             )
             coverage["incomplete"] |= result.incomplete
-            for raw in result.records:
+            async with self.sessions() as session:
+                prior_rows = (
+                    await session.scalars(
+                        select(Repository).where(
+                            Repository.source_id == "github",
+                            Repository.external_id.in_(
+                                [str(raw.get("id", "")) for raw in result.records]
+                            ),
+                        )
+                    )
+                ).all()
+            checked = {repo.external_id: repo.readme_checked_at for repo in prior_rows}
+            # 先处理从未检查者，再处理最久未检查者；频繁 push 的头部仓库不独占文档预算。
+            records = sorted(
+                result.records,
+                key=lambda raw: (
+                    checked.get(str(raw.get("id", ""))) or datetime.min.replace(tzinfo=UTC)
+                ),
+            )
+            for raw in records:
                 external_id = str(raw.get("id", ""))
                 if external_id in seen:
                     continue
@@ -318,8 +383,13 @@ class SyncService:
                         )
                         needs_readme = (
                             previous is None
-                            or previous.readme_hash is None
+                            or (previous.readme_hash is None and previous.readme_checked_at is None)
                             or previous.readme_checked_pushed_at != item.pushed_at
+                            or (
+                                previous.readme_status == "missing"
+                                and previous.readme_checked_at is not None
+                                and self.clock() - previous.readme_checked_at >= timedelta(days=1)
+                            )
                         )
                         etag = previous.readme_etag if previous else None
                     readme = None
@@ -361,6 +431,21 @@ class SyncService:
                         return
                 if len(seen) % 100 == 0:
                     logger.info("sync_progress", extra={"job_id": str(job_id), "counts": counts})
+            if planned:
+                coverage["cycle_limited"] |= result.total > 1000 or result.search_incomplete
+                if result.next_offset is not None:
+                    coverage.update(
+                        query_index=index, query_offset=result.next_offset, incomplete=True
+                    )
+                else:
+                    coverage.update(query_index=index + 1, query_offset=0)
+                    if index + 1 == len(queries):
+                        coverage.update(
+                            cycle_in_progress=False, incomplete=coverage["cycle_limited"]
+                        )
+                await self._checkpoint(job_id, coverage)
+                if result.next_offset is not None:
+                    break
 
     async def _store_github(self, item, raw, readme, job_id, counts):
         now = self.clock()
@@ -390,9 +475,19 @@ class SyncService:
                 setattr(repo, key, value)
             if repo.license == "NOASSERTION":
                 repo.license = None
+            if (
+                readme is None
+                and repo.readme_status == "missing"
+                and repo.readme_hash
+                and repo.availability == "active"
+            ):
+                repo.availability = "unverified"
             await session.flush()
             document = None
             if readme:
+                repo.readme_checked_at = now
+                repo.readme_checked_pushed_at = item.pushed_at
+                repo.readme_status = "missing" if readme.status == "missing" else "available"
                 if readme.status == "content":
                     digest = content_hash(readme.body)
                     if digest != repo.readme_hash:
@@ -468,6 +563,16 @@ class SyncService:
                 "topics": item.topics,
             }
             digest = document.content_hash if document else content_hash(stable)
+            if document:
+                baseline = await session.scalar(
+                    select(AssetVersion).where(
+                        AssetVersion.asset_id == asset.id,
+                        AssetVersion.source_hash == document.content_hash,
+                        AssetVersion.content_origin == "source_metadata",
+                    )
+                )
+                if baseline and review_facts(baseline.raw_data) != review_facts(raw):
+                    digest = content_hash({"readme": document.content_hash, **review_facts(raw)})
             await self._source_version(
                 session,
                 asset,
@@ -539,7 +644,12 @@ class SyncService:
             )
         ).all()
         values = calculate_trend(
-            observations, repo.pushed_at, repo.source_created_at, bool(repo.readme_hash)
+            observations,
+            repo.pushed_at,
+            repo.source_created_at,
+            bool(repo.readme_hash),
+            weights=self.settings.trend_weights,
+            formula_version=self.settings.trend_formula_version,
         )
         await session.execute(
             insert(TrendScore)

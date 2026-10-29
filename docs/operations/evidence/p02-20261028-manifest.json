@@ -1,0 +1,32 @@
+{
+  "scope": "2026-10-28 一次性历史刷新；依赖代码提交 00ea3ce 与本机输入/数据库，不是新的在线同步入口",
+  "script_archive": "p02-20261028-apply-sources.py.txt",
+  "files": {
+    "apply_sources.py": {
+      "sha256": "7b5cba7ba31b25fdaa93bb342f7237ebf298143bd6bafb8a45730107da8e8bab",
+      "bytes": 4765
+    },
+    "live-checks-expanded.json": {
+      "sha256": "19f5df58dbdd4a6bf0e345c7e1dfbd3aba03ded61a62c4bc58b44f339ab0d0c2",
+      "bytes": 7452739
+    },
+    "database-bindings.json": {
+      "sha256": "cd962517fb43ab7713040795b74ae7b01280362b1774f4151d1bb9459ee93bc9",
+      "bytes": 27074
+    },
+    "sync-result.json": {
+      "sha256": "dd920df23d62c7e13ff63ef707828ac577d5e697dfb9506538dbc2304eb42f9e",
+      "bytes": 776
+    },
+    "decisions.json": {
+      "sha256": "87ee1b3f8173bd3d0c0accd16d669daa230bc4c1313351288e606f0b92398d37",
+      "bytes": 505021
+    },
+    "authorization.json": {
+      "sha256": "877642a637ef55c5bb76c6b32761b82df3b75819a842887d2cf8701e55e4ab94",
+      "bytes": 739
+    }
+  },
+  "source_evidence_hash": "debf03a906b8145b976a847ae93454f6f123ca99314d5d72fa1beae83e9f8cbf",
+  "job_id": "a0777579-487d-42c4-bb94-dddd97f2f6aa"
+}

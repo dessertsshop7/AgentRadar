@@ -47,6 +47,8 @@ services:
       SYNC_MAX_RECORDS: ${SYNC_MAX_RECORDS:-1500}
       SYNC_README_LIMIT: ${SYNC_README_LIMIT:-30}
       SYNC_MCP_LIMIT: ${SYNC_MCP_LIMIT:-100}
+      TREND_FORMULA_VERSION: ${TREND_FORMULA_VERSION:-p02-v1}
+      TREND_WEIGHTS: '${TREND_WEIGHTS:-{"growth":0.5,"activity":0.25,"freshness":0.15,"quality":0.1}}'
     ports:
       - "127.0.0.1:8000:8000"
     depends_on:

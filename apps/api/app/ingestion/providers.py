@@ -156,6 +156,8 @@ class Discovery:
     pages: int = 0
     incomplete: bool = False
     next_cursor: str | None = None
+    next_offset: int | None = None
+    search_incomplete: bool = False
 
 
 @dataclass
@@ -169,7 +171,9 @@ class GitHubRepositoryAdapter:
     def __init__(self, client: httpx.AsyncClient):
         self.http = ProviderHTTP(client)
 
-    async def discover(self, query: str, limit=1000) -> Discovery:
+    async def discover(self, query: str, limit=1000, *, offset=None) -> Discovery:
+        if offset is not None:
+            return await self._window(query, limit, offset)
         result = Discovery()
         url = "/search/repositories"
         params = {"q": query, "per_page": min(100, limit), "sort": "stars", "order": "desc"}
@@ -200,6 +204,53 @@ class GitHubRepositoryAdapter:
         result.incomplete |= bool(url)
         return result
 
+    async def _window(self, query, limit, offset):
+        """默认计划固定每页 100；预算可在页中耗尽，下一次从记录偏移续读。"""
+        if not 0 <= offset < 1000:
+            raise ValueError("查询偏移超出 GitHub 搜索窗口")
+        result = Discovery()
+        position = offset
+        while position < 1000 and len(result.records) < limit:
+            data = object_json(
+                await self.http.get(
+                    "/search/repositories",
+                    params={
+                        "q": query,
+                        "per_page": 100,
+                        "page": position // 100 + 1,
+                        "sort": "stars",
+                        "order": "desc",
+                    },
+                )
+            )
+            if not isinstance(data.get("items"), list) or not isinstance(
+                data.get("total_count"), int
+            ):
+                raise ProviderError("SCHEMA_CHANGED")
+            result.total = data["total_count"]
+            result.search_incomplete |= bool(data.get("incomplete_results"))
+            result.incomplete |= bool(data.get("incomplete_results")) or result.total > 1000
+            result.pages += 1
+            items = data["items"][position % 100 :]
+            remaining = min(limit - len(result.records), 1000 - position)
+            selected = items[:remaining]
+            if any(
+                not isinstance(item, dict) or not isinstance(item.get("id"), int)
+                for item in selected
+            ):
+                raise ProviderError("SCHEMA_CHANGED")
+            result.records.extend(selected)
+            position += len(selected)
+            if position >= min(result.total, 1000) or not selected:
+                break
+            if len(result.records) >= limit:
+                result.next_offset = position
+                result.incomplete = True
+                break
+            if len(data["items"]) < 100:
+                break
+        return result
+
     async def repository(self, full_name: str) -> dict:
         response = await self.http.get("/repos/" + quote(full_name, safe="/"))
         if response.status_code == 404:
@@ -227,9 +278,20 @@ class MCPRegistryAdapter:
     async def discover(
         self, limit=100, *, search=None, cursor=None, updated_since=None
     ) -> Discovery:
+        try:
+            async with asyncio.timeout(60):
+                return await self._discover(
+                    limit, search=search, cursor=cursor, updated_since=updated_since
+                )
+        except TimeoutError:
+            raise ProviderError("PAGINATION_TIMEOUT") from None
+
+    async def _discover(self, limit, *, search, cursor, updated_since):
         result = Discovery()
         cursors = set()
         while len(result.records) < limit:
+            if result.pages >= 100:
+                raise ProviderError("PAGINATION_LIMIT")
             params = {"limit": min(100, limit - len(result.records)), "version": "latest"}
             if search:
                 params["search"] = search

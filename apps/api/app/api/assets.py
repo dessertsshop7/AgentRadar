@@ -3,7 +3,7 @@
 import asyncio
 import logging
 from collections.abc import AsyncIterator
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Literal
 from uuid import UUID
 
@@ -27,6 +27,8 @@ router = APIRouter()
 logger = logging.getLogger("agentradar")
 Category = Literal["knowledge", "agent-workflow", "mcp-integration", "framework"]
 Difficulty = Literal["unknown", "beginner", "visual", "developer"]
+Kind = Literal["tool", "agent", "skill", "mcp", "framework"]
+Maintenance = Literal["active", "inactive", "unknown", "needs_review"]
 
 
 class AssetItem(BaseModel):
@@ -49,6 +51,9 @@ class AssetItem(BaseModel):
     review: dict
     needs_review: bool
     collected_at: datetime
+    source_updated_at: datetime | None = None
+    content_updated_at: datetime | None = None
+    maintenance: str = "unknown"
     sources: list[dict]
     trend: dict | None = None
 
@@ -127,6 +132,10 @@ async def serialize(session: AsyncSession, rows, trends=False):
                     "license": repo.license or "unknown",
                     "collected_at": repo.collected_at.isoformat(),
                     "primary": link.is_primary,
+                    "pushed_at": repo.pushed_at.isoformat() if repo.pushed_at else None,
+                    "stars": repo.stars,
+                    "archived": repo.archived,
+                    "availability": repo.availability,
                 }
             )
     scores = {}
@@ -139,6 +148,17 @@ async def serialize(session: AsyncSession, rows, trends=False):
         }
     items = []
     for asset, version in rows:
+        primary = next((source for source in sources[asset.id] if source.get("primary")), {})
+        pushed_at = primary.get("pushed_at")
+        maintenance = "unknown"
+        if pushed_at:
+            maintenance = (
+                "active"
+                if datetime.fromisoformat(pushed_at) >= datetime.now(UTC) - timedelta(days=180)
+                else "inactive"
+            )
+        if asset.review_state == "needs_review":
+            maintenance = "needs_review"
         item = {
             "id": asset.id,
             "slug": asset.slug,
@@ -163,6 +183,9 @@ async def serialize(session: AsyncSession, rows, trends=False):
             },
             "needs_review": asset.review_state == "needs_review",
             "collected_at": asset.collected_at,
+            "source_updated_at": pushed_at,
+            "content_updated_at": version.created_at,
+            "maintenance": maintenance,
             "sources": sources[asset.id],
         }
         if version.source_url:
@@ -188,6 +211,34 @@ async def serialize(session: AsyncSession, rows, trends=False):
     return items
 
 
+def filter_catalog(query, kind, maintenance):
+    if kind:
+        query = query.where(Asset.asset_type == kind)
+    if maintenance == "needs_review":
+        return query.where(Asset.review_state == "needs_review")
+    if maintenance:
+        primary = (
+            select(Repository.pushed_at)
+            .join(AssetRepository)
+            .where(
+                AssetRepository.asset_id == Asset.id,
+                AssetRepository.is_primary,
+            )
+            .correlate(Asset)
+            .scalar_subquery()
+        )
+        cutoff = datetime.now(UTC) - timedelta(days=180)
+        condition = (
+            (primary >= cutoff)
+            if maintenance == "active"
+            else (primary < cutoff)
+            if maintenance == "inactive"
+            else primary.is_(None)
+        )
+        query = query.where(Asset.review_state != "needs_review", condition)
+    return query
+
+
 @router.get("/assets", response_model=AssetList)
 async def assets(
     request: Request,
@@ -196,11 +247,13 @@ async def assets(
     q: Annotated[str | None, Query(max_length=100)] = None,
     category: Category | None = None,
     difficulty: Difficulty | None = None,
+    kind: Kind | None = None,
+    maintenance: Maintenance | None = None,
     page: Annotated[int, Query(ge=1, le=10000)] = 1,
     page_size: Annotated[int, Query(ge=1, le=50)] = 20,
     sort: Literal["slug", "updated"] = "slug",
 ):
-    query = public_query()
+    query = filter_catalog(public_query(), kind, maintenance)
     if q and q.strip():
         escaped = q.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         pattern = f"%{escaped}%"
@@ -224,7 +277,17 @@ async def assets(
     if difficulty:
         query = query.where(AssetVersion.difficulty == difficulty)
     total = await session.scalar(select(func.count()).select_from(query.subquery()))
-    ordering = (Asset.slug,) if sort == "slug" else (Asset.collected_at.desc(), Asset.slug)
+    pushed = (
+        select(Repository.pushed_at)
+        .join(AssetRepository)
+        .where(
+            AssetRepository.asset_id == Asset.id,
+            AssetRepository.is_primary,
+        )
+        .correlate(Asset)
+        .scalar_subquery()
+    )
+    ordering = (Asset.slug,) if sort == "slug" else (pushed.desc().nulls_last(), Asset.slug)
     rows = (
         await session.execute(
             query.order_by(*ordering).offset((page - 1) * page_size).limit(page_size)
@@ -254,7 +317,8 @@ async def asset_detail(asset_id: str, request: Request, response: Response, sess
 
 
 @router.get("/categories")
-async def categories(request: Request, session: Database):
+async def categories(request: Request, response: Response, session: Database):
+    response.headers["Cache-Control"] = "public, max-age=30"
     visible = public_query().with_only_columns(Asset.id, AssetVersion.categories).subquery()
     rows = (
         await session.execute(
@@ -277,11 +341,20 @@ async def categories(request: Request, session: Database):
 @router.get("/trending", response_model=AssetList)
 async def trending(
     request: Request,
+    response: Response,
     session: Database,
+    category: Category | None = None,
+    kind: Kind | None = None,
+    maintenance: Maintenance | None = None,
     page: Annotated[int, Query(ge=1, le=10000)] = 1,
     page_size: Annotated[int, Query(ge=1, le=50)] = 20,
 ):
-    query = public_query().join(TrendScore, TrendScore.asset_id == Asset.id)
+    response.headers["Cache-Control"] = "public, max-age=30"
+    query = filter_catalog(public_query(), kind, maintenance).join(
+        TrendScore, TrendScore.asset_id == Asset.id
+    )
+    if category:
+        query = query.where(AssetVersion.categories.contains([category]))
     total = await session.scalar(select(func.count()).select_from(query.subquery()))
     rows = (
         await session.execute(

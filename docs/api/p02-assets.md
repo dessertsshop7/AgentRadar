@@ -5,10 +5,10 @@ API 前缀 `/api/v1`，在线 OpenAPI 位于 `/api/v1/docs`。查询不会触发
 
 | 方法/路径 | 参数与返回 | 可见性 |
 | --- | --- | --- |
-| GET /assets | q ≤100 字；category 四类词表；difficulty 四类枚举；page 1–10000；page_size 1–50；sort=slug 或 updated | 已审内容；默认 slug 升序，updated 按采集时间降序再按 slug，避免不稳定分页 |
+| GET /assets | q ≤100 字；category 四类词表；difficulty 四类枚举；kind 五类资产类型；maintenance 四类维护状态；page 1–10000；page_size 1–50；sort=slug 或 updated | 已审内容；默认 slug 升序，updated 按主仓库 pushed_at 降序，未知值最后，再按 slug |
 | GET /assets/{id} | UUID 或稳定 slug；返回 item、request_id | 不存在/草稿/撤下/来源待核实统一 404 |
 | GET /categories | items 中包含 id、label、count；request_id | 只统计已发布版本中的分类，零公开条目时返回空数组 |
-| GET /trending | page、page_size 同列表；分数降序、slug 平局排序 | 已发布且有真实主仓库观测；无足够增长信息时明确 null |
+| GET /trending | page、page_size 同列表，支持 category/kind/maintenance；分数降序、slug 平局排序 | 已发布且有真实主仓库观测；无足够增长信息时明确 null |
 | GET /health | 保留 P00 真实 SQL 健康状态 | 数据库失败 503，不替换成静态状态 |
 
 列表统一字段为 items、total、page、page_size、request_id；详情为 item、request_id。
@@ -16,6 +16,14 @@ item 包含 id、slug、name、kind、summary_zh、description_zh、difficulty�
 requirements、limitations、categories、content_version_id、source_hash、origin、review、needs_review、
 collected_at、sources。趋势项额外有 trend（版本、分项、得分、实际窗口、样本数、growth_known、star_growth）。
 sources 给出可核实 URL、来源 ID、采集时间和未知许可证；不会返回整份 raw_data 或令牌。
+
+2026-10-29 缺陷修复新增契约：
+
+- `kind`：tool / agent / skill / mcp / framework；所有筛选按 AND 合并，非法枚举返回 422。
+- `maintenance`：active（主仓库 180 天内 push）、inactive（超过 180 天）、unknown（无主仓库或 push 未知）、needs_review（来源已变化）。needs_review 优先于活跃判断；当前因来源不可用隐藏的资产仍不会进入任何筛选。
+- item 新增 `source_updated_at`（主仓库 push）、`content_updated_at`（中文版本创建时间）、`maintenance`。采集时间仍单列 collected_at，不能当成内容更新或数据过期的证明。
+- GitHub sources 新增 pushed_at、stars、archived、availability；未关联仓库的 Registry 条目维护状态可以为 unknown。P03 可根据 collected_at 和自己的过期阈值显示数据新鲜度，不把它等同于维护状态。
+- 列表、详情、分类和趋势现在统一设置 30 秒公开缓存。
 
 2026-10-28 补充：`review` 包含 `actor_type`、`reviewed_by`、`reviewed_at`。
 新人工审核为 `human`，用户明确委托的 AI 审核为 `delegated_ai`，缺少历史类型记录时为 `unknown`。

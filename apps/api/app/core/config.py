@@ -1,6 +1,7 @@
+import math
 from typing import Literal
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import ArgumentError
@@ -19,6 +20,26 @@ class Settings(BaseSettings):
     sync_max_records: int = Field(default=1500, ge=1, le=10000)
     sync_readme_limit: int = Field(default=30, ge=0, le=200)
     sync_mcp_limit: int = Field(default=100, ge=1, le=10000)
+    trend_formula_version: str = Field(default="p02-v1", min_length=1, max_length=40)
+    trend_weights: dict[str, float] = {
+        "growth": 0.5,
+        "activity": 0.25,
+        "freshness": 0.15,
+        "quality": 0.1,
+    }
+
+    @model_validator(mode="after")
+    def validate_trend(self):
+        defaults = {"growth": 0.5, "activity": 0.25, "freshness": 0.15, "quality": 0.1}
+        if (
+            set(self.trend_weights) != set(defaults)
+            or any(not math.isfinite(v) or v < 0 for v in self.trend_weights.values())
+            or not math.isclose(sum(self.trend_weights.values()), 1, abs_tol=1e-9)
+        ):
+            raise ValueError("趋势权重须包含四项有限非负数且总和为 1")
+        if self.trend_weights != defaults and self.trend_formula_version == "p02-v1":
+            raise ValueError("修改趋势权重必须指定新的公式版本")
+        return self
 
     @field_validator("database_url")
     @classmethod

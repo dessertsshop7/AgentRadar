@@ -14,6 +14,22 @@ SYNC_INTERVAL_HOURS（默认 24）；不是每分钟全量采集。关闭/重启
 默认单次上限为 GitHub 1500 条、README 30 次、MCP 100 条，可用对应 SYNC_* 配置调整。
 测试默认不接通真实外部同步。调度在 API 进程内，每个来源仍由 PostgreSQL 事务级 advisory lock 跨进程互斥。
 
+2026-10-29 修复：默认 GitHub 计划在任务 coverage 中保存 github_plan、plan_queries、query_index、query_offset。
+预算耗尽后下次从固定每页 100 条的记录偏移继续；查询完成才推进到下一组。进程中断重放当前未完成窗口，
+沿用来源锁和幂等约束。手工 --query 以及历史一次性刷新不会覆盖默认计划检查点。
+一个周期使用开始时的查询与日期范围，结束后生成新周期，不回放历史日程；未完成整个周期不推进成功时间。
+GitHub 单查询前 1000 条以外仍明确记为 coverage 不完整并继续其他组，不宣称全量；需进一步缩小查询条件才能覆盖该范围。
+正常定额截断仍按配置间隔继续，不会在每分钟 tick 轰炸同一范围。
+
+README 新增 readme_checked_at 与 readme_status；原有文档只能回填 available，不伪造历史检查时间。
+404 同样记录检查标记；push 不变时负缓存 24 小时，期间不重复请求，过期或 push 变化才重试。
+预算优先给未检查及最久未检查的条目。旧文档消失会保持来源 unverified，缓存命中不会把它重新公开。
+MCP 单次分页新增 100 页和总计 60 秒上限，超过时记录安全错误，不推进游标，后续重放当前批次。
+
+趋势权重可在根 .env 设置 TREND_WEIGHTS（JSON 四项权重），并设置 TREND_FORMULA_VERSION；Compose 会传给 API。
+默认值保留 p02-v1 与 0.5/0.25/0.15/0.1。更改默认权重必须使用新版本名，重建 API 后仅在后续真实同步计算中生效，
+不会把旧分数静默改写为新公式。未知增长仍为 null。
+
 锁连接只持锁，数据使用短事务提交；中断/取消释放锁。下一次取得锁后将遗留 running 标为 interrupted，
 随后幂等重采。普通健康查询使用独立会话，不等待外部 HTTP 完成。APScheduler 无持久化日历任务，
 持久化业务时间和检查点在 PostgreSQL，不引入 Redis/队列。
@@ -124,6 +140,13 @@ $env:PYTHONPATH = (Resolve-Path .\apps\api).Path
 本轮完整中文结果在 `artifacts/p02/delegated-review-20261028/审核执行结果.md`，不是等待用户逐条审批的队列。
 `decisions.json`、`execution-ledger.jsonl`、`verification.json` 分别保存结论、实际事务结果和真实 API 核验。
 这些本机产物和操作前数据库备份受 Git 忽略规则保护，不自动随代码推送。
+
+历史一次性刷新脚本的原样留证在 [脚本归档](evidence/p02-20261028-apply-sources.py.txt)，
+输入/输出的字节哈希、来源规范化哈希和任务 ID 见 [哈希清单](evidence/p02-20261028-manifest.json)。
+当时实际执行命令为根目录设置 PYTHONPATH=apps/api 后，以项目 Python 运行
+`artifacts/p02/delegated-review-20261028/apply_sources.py`，依赖当时的代码提交 00ea3ce、真实输入快照与数据库。
+归档为 .txt，仅用于核对历史实现；不是当前日常维护入口。复现须先在隔离恢复环境准备相同输入与起始备份，
+按哈希清单校验，不能在当前开发库重复执行以冒充新的官方取证。
 
 Skill 只接受操作者明确指定的可信根目录：
 

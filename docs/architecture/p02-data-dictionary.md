@@ -2,6 +2,7 @@
 
 2026-10-18。实际迁移为 `0001_p00_baseline → 0002_p02_assets → 0003_p02_review`。
 P00 空基线未修改；0003 是在测试中发现来源回退及草稿分类隔离问题后增加的演进。
+2026-10-29 新增 `0004_p02_readme_check`，增加 README 检查时间与 unknown/available/missing 状态；不修改已交付的 0001–0003。
 
 ## 实体与职责
 
@@ -44,6 +45,12 @@ P02 不调用项目 LLM API；内容来源与审核状态独立，已发布内�
 若来源回到已审内容对应的哈希，复用历史证据，状态恢复 approved。不能靠“最新创建时间”判断当前来源。
 人工中文修订另建版本，不能覆盖已审中文字段；导入必须带期待的 source_hash，过期即拒绝。
 
+修复后，已有 README 来源同时比较 description、标准化 license SPDX 与排序后的 topics；
+这些事实变化也会创建新来源版本并要求重审，指标 Stars/push 不触发中文重审。
+兼容已有仅 README 哈希的来源版本；只有事实变化时使用 README+元信息复合哈希，回退可复用历史版本。
+`source_hash` 因此不保证等于 README 哈希，原文哈希仍在 repository_documents.content_hash。
+尚未实现单独抓取许可正文变化；SPDX 未变但许可文件正文变化的自动识别仍是限制。
+
 发布须满足：明确审核确认与审核人、中文摘要、版本中的场景分类、有效来源哈希与可追溯 URL。
 GitHub 条目还需实际 README、未归档、来源可用且最近 180 天有 push。未知费用和门槛可以保留 unknown。
 命令中的审核人为操作者明确录入，没有账号认证或企业级审计，不冒充已验证的人类身份。
@@ -76,3 +83,5 @@ needs_review 时只显示原已审版本并提示待重审；新中文、标签�
 窗口为最近一次观测之前最多七天中实际存在的观测，返回实际起止时间。
 不足两个不同时间点时 growth 与 star_growth 为 null，增长分项不贡献总分；负增长保留原 delta，得分贡献为零。
 即使窗口只有几分钟，也只代表这几分钟，不能标为七日增长或 GitHub 官方 Trending。
+权重通过 TREND_WEIGHTS 配置，需包含 growth/activity/freshness/quality 四个有限非负数且和为 1；
+变更默认权重必须指定新的 TREND_FORMULA_VERSION，计算时将实际权重存入 components.weights。

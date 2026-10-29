@@ -40,7 +40,10 @@ def classify(description: str, tags: list[str]) -> dict[str, str]:
     return matches
 
 
-def calculate_trend(observations, pushed_at, created_at, has_readme):
+def calculate_trend(
+    observations, pushed_at, created_at, has_readme, *, weights=None, formula_version="p02-v1"
+):
+    weights = weights or {"growth": 0.5, "activity": 0.25, "freshness": 0.15, "quality": 0.1}
     observations = sorted(observations)
     end = observations[-1][0]
     observations = [row for row in observations if row[0] >= end - timedelta(days=7)]
@@ -69,9 +72,9 @@ def calculate_trend(observations, pushed_at, created_at, has_readme):
         "quality": quality,
     }
     return {
-        "formula_version": "p02-v1",
-        "score": round(0.5 * (growth or 0) + 0.25 * activity + 0.15 * freshness + 0.1 * quality, 4),
-        "components": components,
+        "formula_version": formula_version,
+        "score": round(sum(weights[key] * (value or 0) for key, value in components.items()), 4),
+        "components": {**components, "weights": weights},
         "star_growth": delta,
         "sample_count": len(observations),
         "window_start": start,

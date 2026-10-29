@@ -222,6 +222,8 @@ async def withdraw_asset(session, asset_id, *, reviewer, confirmed, note):
     if asset is None:
         raise ValueError("资产不存在")
     source = await current_source(session, asset)
+    if source is None:
+        raise ValueError("缺少真实来源版本，请先核实来源")
     digest = content_hash({"action": "withdraw", "reviewer": reviewer, "note": note})
     if not await session.scalar(
         select(AssetVersion.id).where(

@@ -62,6 +62,10 @@ class Repository(Base):
     readme_hash: Mapped[str | None] = mapped_column(String(64))
     readme_etag: Mapped[str | None] = mapped_column(Text)
     readme_checked_pushed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    readme_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    readme_status: Mapped[str] = mapped_column(
+        String(20), default="unknown", server_default="unknown"
+    )
 
 
 class RepositoryDocument(Base):
